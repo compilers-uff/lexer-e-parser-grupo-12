@@ -50,6 +50,5 @@ To sync with updates upstream:
 
 Team member 1: 
 
-Team member 2: 
+Isadora Pacheco Ribeiro
 
-(Students should edit this section with their write-up)
