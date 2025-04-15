@@ -530,7 +530,10 @@ action code {:
         return new ArrayList<T>();
     }
 
-     /** Return the leftmost Location from a list of Nodes. */
+    // Funções auxiliares de localização: 
+    // extraem com segurança as coordenadas (linha/coluna) de nós ou listas,
+    // usando fallback para [0,0] quando necessário. 
+
     ComplexSymbolFactory.Location getLeftLoc(List<? extends Node> nodes) {
         if (nodes == null || nodes.isEmpty()) {
              return new ComplexSymbolFactory.Location(0,0); 
@@ -545,9 +548,9 @@ action code {:
     /*
 
     as funções single, combine, empty são ajudantes gerais para listas,
-    enquanto as funções getLeftLoc, getRightLoc, nodeLeftLoc, nodeRightLoc 
-    são ajudantes específicos para extrair
-    informações de localização de forma segura
+        enquanto as funções getLeftLoc, getRightLoc, nodeLeftLoc, nodeRightLoc 
+        são ajudantes específicos para extrair
+        informações de localização 
      e conveniente para construir os nós da sua AST ChocoPy.
     
     */
@@ -633,7 +636,7 @@ non terminal List<ElifItem>    opt_elif_chain;
 non terminal List<ElifItem>    non_empty_elif_chain;
 
 
-/*expressoes mds n aguento mais */
+// ================== EXPRESSÕES ==================
 
 non terminal Expr              expr, opt_expr;
 non terminal Expr              logical_expr, rel_expr, arith_expr, term, factor, primary;

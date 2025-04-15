@@ -19,7 +19,7 @@ import java.util.regex.Matcher;
 %cup
 
 /*
-Vou utilizar a abordagem de Scanner Functtion Customization 
+Vou utilizar a abordagem de Scanner Functtion Customization - Explicada no README.md
 Adicionando essa diretiva para que o JFlex possa usar a função originalNextToken
 ao invés de next_token()
 */
@@ -44,8 +44,11 @@ ao invés de next_token()
 
     // Buffer para acumular caracteres de strings
     private StringBuilder string_buffer = new StringBuilder();
+
+    // Armazenamento da linha e coluna onde começou a string para reportar a localização correta na AST
     private int string_start_line;
     private int string_start_col;
+
     // Regex para identificar IDs
     private static final Pattern ID_REGEX_PATTERN = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
 
@@ -76,9 +79,9 @@ ao invés de next_token()
         }
     }
 
+    // Calcula a quantidade total de espaços correspondentes ao whitespace inicial de uma linha, tabulações precisa ser múltiplos de 8
     private int calculateIndent(String whitespace) {
         int count = 0;
-
 
         for (char c : whitespace.toCharArray()) {
             if (c == ' ') {
@@ -96,6 +99,28 @@ ao invés de next_token()
     private char pendingChar = '\0';
 
     /* Indentação */
+
+    /* 
+    
+    Utiliza-se uma pilha que rastreia o nível de indentação esperados,
+    Gerando token INDENT quando a indentação aumenta e DEDENT quando ela diminiu
+    Deterctamos e reportar erro qnd a indentação quando o aumento ocorre fora de contextos válidos
+    Ignora mudançás de linhas de comentários ou linha em branco
+    e usamos flags para ajudar no controle. 
+
+    O método principal é o handleIndentation, que é chamado ao encontrar
+
+    se aumentou -> verifica se era esperado de um bloco indentado, se sim, gera Indent
+    se diminiu -> gera dedent até que o nível de indentação seja o esperado
+    se mesmo -> mantém o nivel atual
+
+    O método handleIncreaseIndent adiciona o nível de indentação à pilha e gera INDENT
+    handleDecreaseIndent remove o nível de indentação da pilha até que o nível esperado seja encontrado
+    handleBlankOrCommentLine é chamado para lidar com linhas em branco ou comentários
+    handleEOF é chamado quando o fim do arquivo é detectado, gerando DEDENTs até que a pilha tenha apenas um nível
+
+    */
+
      private class IndentationState {
         private final Stack<Integer> indentStack = new Stack<>();
         private boolean isLogicalLineStart = true;
@@ -136,7 +161,8 @@ ao invés de next_token()
         boolean validIndent = stack.contains(currentIndent);
 
         if (!validIndent) {
-            log("Aviso: Indentação " + currentIndent + " não encontrada na pilha: " + stack);            pendingTokens.add(symbol(ChocoPyTokens.UNRECOGNIZED, "IndentationError"));
+            log("Aviso: Indentação " + currentIndent + " não encontrada na pilha: " + stack);            
+            pendingTokens.add(symbol(ChocoPyTokens.UNRECOGNIZED, "IndentationError"));
             return;
         }
         
@@ -200,15 +226,7 @@ ao invés de next_token()
         log("handleSameIndent: fromEmptyLeadingWhitespace=" + fromEmptyLeadingWhitespace +
             ", isFirstLine()=" + indentState.isFirstLine() +
             ", wasLastLineBlankOrComment=" + wasLastLineBlankOrComment);
-        // Versão anterior - problemática:
-        // if (!indentState.isFirstLine() && !wasLastLineBlankOrComment && !fromEmptyLeadingWhitespace) {
-        //     log("Adicionando NEWLINE porque a indentação é a mesma e não estamos no início de uma linha sem espaços ou após linha branca/comentário.");
-        //     pendingTokens.add(symbol(ChocoPyTokens.NEWLINE, "\n"));
-        // } else {
-        //     log("Não adicionando NEWLINE (ou é a primeira linha, ou após linha branca/comentário, ou início de linha sem espaço).");
-        // }
 
-        // Nova versão - simplificada:
         log("Não adicionando NEWLINE extra para linha com mesma indentação.");
     }
 
@@ -519,7 +537,7 @@ ValidStringChar = [^\n\r\"\\]
                    return symbol(ChocoPyTokens.UNRECOGNIZED,  "Illegal escape: " + yytext());
                  }
 
-} // Fim de <STRING_STATE>
+} 
 
 <INDENT_STATE> {
     // Consome os espaços em branco no início da linha e processa indentação
