@@ -1,8 +1,9 @@
 import java.util.ArrayList;
 import java.util.List;
-
+import java.util.Collections;
 import java_cup.runtime.*;
 import chocopy.common.astnodes.*;
+import java.math.BigInteger;
 
 /* The following code section is copied verbatim to the generated
  * parser class. */
@@ -17,35 +18,68 @@ parser code {:
 
     /** Return the Program node that results from parsing the stream of
      *  tokens produced by lexical analysis.  In the case of syntax errors,
-     *  the program may be empty, but will have error messages. */
+     *  the program may be empty, but will have error messages. 
+     
+     * editado para q o parseProgram retorne algo pelo
+     * menos vazio mas com os erros pra debugar
+     */
     public Program parseProgram(boolean debug) {
         try {
             Symbol result = debug ? debug_parse() : parse();
+
+
             if (result == null || !(result.value instanceof Program)) {
-                return new Program(new Location(0, 0), new Location(0, 0),
+                ComplexSymbolFactory.Location errorLoc = new ComplexSymbolFactory.Location(0,0);
+                if (cur_token instanceof ComplexSymbolFactory.ComplexSymbol) {
+                     errorLoc = ((ComplexSymbolFactory.ComplexSymbol) cur_token).xleft != null
+                              ? ((ComplexSymbolFactory.ComplexSymbol) cur_token).xleft
+                              : new ComplexSymbolFactory.Location(0,0);
+                }
+
+                return new Program(errorLoc, errorLoc, 
                                    new ArrayList<Declaration>(),
                                    new ArrayList<Stmt>(),
                                    errors);
             } else {
-                return (Program) result.value;
+                System.out.println("[DEBUG] Resultado do parse: " + result.value);
+
+                Program prog = (Program) result.value;
+                if (prog.errors != null && errors != null && !errors.errors.isEmpty()) {
+                    List<CompilerError> globalErrorsCopy = new ArrayList<>(errors.errors);
+                    for (CompilerError err : globalErrorsCopy) {
+                        if (prog.errors.errors != null) { 
+                        prog.errors.errors.add(err);
+                        }
+                    }
+                }
+                return prog;
             }
         } catch (RuntimeException excp) {
             throw excp;
         } catch (Exception excp) {
-            String msg =
-                String.format("Internal parser error detected: %s%n", excp);
+            String msg = String.format("Internal parser error detected: %s%n", excp);
+            excp.printStackTrace();
             throw new AssertionError(msg);
         }
     }
 
     @Override
-    public SymbolFactory getSymbolFactory() {
-        return ((ChocoPyLexer) getScanner()).symbolFactory;
+        public SymbolFactory getSymbolFactory() {
+        if (getScanner() instanceof ChocoPyLexer) {
+            return ((ChocoPyLexer) getScanner()).symbolFactory;
+        }
+        return new ComplexSymbolFactory(); 
     }
+
 
     @Override
     public void syntax_error(Symbol cur_token) {
                 String token = symbl_name_from_id(cur_token.sym);
+
+                if (token != null && token.toUpperCase().contains("ASSIGN")) {
+                    token = "EQ";
+                }
+
                 String text = ((ChocoPyLexer) getScanner()).yytext();
                 errors.syntaxError(
                     ((ComplexSymbolFactory.ComplexSymbol) cur_token).xleft,
@@ -53,43 +87,420 @@ parser code {:
                     "Parse error near token %s: %s", token, text);
     }
 
+
     @Override
     public void unrecovered_syntax_error(Symbol cur_token) {
         /* Do not die */
     }
+    /* 
+    Classe auxiliar para produzir uma lista de declarações e statements
+    */
+    class FuncBody {
+        public final List<Declaration> declarations;
+        public final List<Stmt> statements;
+        private final ComplexSymbolFactory.Location endLocation;
+
+        public FuncBody(List<Declaration> declarations, List<Stmt> statements) {
+            this.declarations = declarations;
+            this.statements = statements;
+            
+            ComplexSymbolFactory.Location declsEndLoc = locationManager.getDeepestListEndLocation("declarations", declarations);
+            ComplexSymbolFactory.Location stmtsEndLoc = locationManager.getDeepestListEndLocation("statements", statements);
+            this.endLocation = locationManager.getLatestLocation(declsEndLoc, stmtsEndLoc);
+        }
+
+        public ComplexSymbolFactory.Location getEndLocation() {
+            return endLocation;
+        }
+    }
+
+    class Block {
+        private final List<Stmt> statements;
+        private final ComplexSymbolFactory.Location startLocation;
+        private final ComplexSymbolFactory.Location endLocation;
+
+        public Block(List<Stmt> statements) {
+            this.statements = (statements != null) ? statements : new ArrayList<>();
+            
+            this.startLocation = !this.statements.isEmpty() ? 
+                locationManager.getDeepestLocation("block-start", this.statements.get(0), false) : 
+                new ComplexSymbolFactory.Location(0,0);
+            
+            this.endLocation = locationManager.getDeepestListEndLocation("block-statements", this.statements);
+        }
+        
+        public Block(ComplexSymbolFactory.Location left, ComplexSymbolFactory.Location right, List<Stmt> statements) {
+            this.statements = statements;
+            this.startLocation = left;
+            this.endLocation = right;
+        }
+
+        public List<Stmt> getStatements() {
+            return statements;
+        }
+
+        public ComplexSymbolFactory.Location getStartLocation() {
+            return startLocation;
+        }
+
+        public ComplexSymbolFactory.Location getEndLocation() {
+            return endLocation;
+        }
+        
+        public ComplexSymbolFactory.Location getLeft() {
+            return startLocation;
+        }
+        
+        public ComplexSymbolFactory.Location getRight() {
+            return endLocation;
+        }
+        
+        public ComplexSymbolFactory.Location getDeepRight() {
+            ComplexSymbolFactory.Location deepLoc = locationManager.getDeepestListEndLocation("block-stmts-deep", statements);
+            return (deepLoc.getLine() > 0) ? deepLoc : endLocation;
+        }
+    }
+
+  /*
+    Class auxiliar para armazenar condicao e corpo do elif
+  */
+    class ElifItem {
+        public final Expr condition;
+        public final List<Stmt> body;
+        private final ComplexSymbolFactory.Location conditionLeft;
+        private final ComplexSymbolFactory.Location conditionRight;
+        private final ComplexSymbolFactory.Location bodyLeft;
+        private final ComplexSymbolFactory.Location bodyRight;
+
+        public ElifItem(Expr condition, List<Stmt> body,
+                        ComplexSymbolFactory.Location conditionLeft, ComplexSymbolFactory.Location conditionRight,
+                        ComplexSymbolFactory.Location bodyLeft, ComplexSymbolFactory.Location bodyRight) {
+            this.condition = condition;
+            this.body = body;
+            this.conditionLeft = conditionLeft;
+            this.conditionRight = conditionRight;
+            this.bodyLeft = bodyLeft;
+            this.bodyRight = bodyRight;
+        }
+
+        public ComplexSymbolFactory.Location getConditionLeft() {
+            return (conditionLeft != null) ? conditionLeft : new ComplexSymbolFactory.Location(0, 0);
+        }
+
+        public ComplexSymbolFactory.Location getConditionRight() {
+            return (conditionRight != null) ? conditionRight : new ComplexSymbolFactory.Location(0, 0);
+        }
+
+        public ComplexSymbolFactory.Location getBodyLeft() {
+            return (bodyLeft != null) ? bodyLeft : new ComplexSymbolFactory.Location(0, 0);
+        }
+
+        public ComplexSymbolFactory.Location getBodyRight() {
+            return (bodyRight != null) ? bodyRight : new ComplexSymbolFactory.Location(0, 0);
+        }
+
+        public ComplexSymbolFactory.Location getRightmostLocation() {
+            return getBodyRight().getLine() > 0 ? getBodyRight() : getConditionRight();
+        }
+    }
+
+    class LocationManager {
+        private static final boolean DEBUG_LOCATIONS = true; 
+        private static final int STANDARD_BLOCK_END_COLUMN = 1; 
+
+        /**
+         * Registra informações de depuração sobre localizações
+         */
+        public void debug(String message, ComplexSymbolFactory.Location... locations) {
+            if (!DEBUG_LOCATIONS) return;
+            
+            System.out.println("[LocationDebug] " + message);
+            int i = 0;
+            for (ComplexSymbolFactory.Location loc : locations) {
+                System.out.println("   Loc" + (i++) + ": " + formatLocation(loc));
+            }
+        }
+        
+        /**
+         * Formata uma localização para depuração
+         */
+        private String formatLocation(ComplexSymbolFactory.Location loc) {
+            if (loc == null) return "null";
+            return String.format("[%d:%d]", loc.getLine(), loc.getColumn());
+        }
+        
+        /**
+         * Obtém a localização final padronizada para um bloco
+         */
+        public ComplexSymbolFactory.Location getBlockEndLocation(
+                String blockType,
+                ComplexSymbolFactory.Location contentEndLoc, 
+                ComplexSymbolFactory.Location dedentLoc) {
+            
+            debug("Calculando fim do bloco " + blockType, 
+                contentEndLoc, dedentLoc);
+            
+            if (contentEndLoc != null && contentEndLoc.getLine() > 0) {
+                int endLine = contentEndLoc.getLine();
+                int endColumn = contentEndLoc.getColumn() + 1;
+                
+                debug("  Usando localização do conteúdo + 1 coluna: [" + endLine + ":" + endColumn + "]");
+                return new ComplexSymbolFactory.Location(endLine, endColumn);
+            }
+            
+            if (dedentLoc != null && dedentLoc.getLine() > 0) {
+                int endLine = dedentLoc.getLine();
+                debug("  Usando linha do DEDENT: " + endLine);
+                return new ComplexSymbolFactory.Location(endLine, 1);
+            }
+            
+            debug("  Nenhuma localização válida encontrada");
+            return new ComplexSymbolFactory.Location(0, 0);
+        }
+        
+        /**
+         * Obtém a localização final para uma expressão
+         */
+        public ComplexSymbolFactory.Location getExprEndLocation(
+                String exprType,
+                ComplexSymbolFactory.Location exprLoc) {
+            
+            debug("Calculando fim da expressão " + exprType, exprLoc);
+            
+            if (exprLoc == null || exprLoc.getLine() == 0) {
+                debug("  Localização inválida");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(
+                    exprLoc.getLine(), 
+                    exprLoc.getColumn());
+            
+            debug("  Localização final da expressão: " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Obtém a localização mais à direita/tardia entre duas localizações
+         */
+        public ComplexSymbolFactory.Location getLatestLocation(
+                ComplexSymbolFactory.Location loc1, 
+                ComplexSymbolFactory.Location loc2) {
+                
+            debug("Comparando localizações", loc1, loc2);
+            
+            if (loc1 == null) {
+                debug("  Loc1 é nula, retornando Loc2");
+                return (loc2 != null) ? loc2 : new ComplexSymbolFactory.Location(0, 0);
+            }
+            if (loc2 == null) {
+                debug("  Loc2 é nula, retornando Loc1");
+                return loc1;
+            }
+            
+            if (loc2.getLine() > loc1.getLine() || 
+                (loc2.getLine() == loc1.getLine() && loc2.getColumn() > loc1.getColumn())) {
+                debug("  Loc2 é mais tarde");
+                return loc2;
+            }
+            
+            debug("  Loc1 é mais tarde");
+            return loc1;
+        }
+        
+        /**
+         * Extrai a localização de início mais profunda de uma lista de nós
+         */
+        public ComplexSymbolFactory.Location getDeepestListStartLocation(String listName, List<? extends Node> nodes) {
+            if (nodes == null || nodes.isEmpty()) {
+                debug("Lista " + listName + " vazia, retornando [0:0]");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            Node first = nodes.get(0);
+            if (first == null || first.getLocation() == null || first.getLocation().length < 2) {
+                debug("Primeiro nó da lista " + listName + " inválido");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(
+                    first.getLocation()[0], first.getLocation()[1]);
+            
+            debug("Início mais profundo da lista " + listName + ": " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Extrai a localização de fim mais profunda de uma lista de nós
+         */
+        public ComplexSymbolFactory.Location getDeepestListEndLocation(String listName, List<? extends Node> nodes) {
+            if (nodes == null || nodes.isEmpty()) {
+                debug("Lista " + listName + " vazia, retornando [0:0]");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location deepestLoc = new ComplexSymbolFactory.Location(0, 0);
+            
+            for (Node node : nodes) {
+                if (node == null || node.getLocation() == null) continue;
+                
+                int[] loc = node.getLocation();
+                if (loc.length < 4) continue;
+                
+                if (loc[2] > deepestLoc.getLine() || 
+                    (loc[2] == deepestLoc.getLine() && loc[3] > deepestLoc.getColumn())) {
+                    deepestLoc = new ComplexSymbolFactory.Location(loc[2], loc[3]);
+                }
+            }
+            
+            debug("Fim mais profundo da lista " + listName + ": " + formatLocation(deepestLoc));
+            return deepestLoc;
+        }
+        
+        /**
+         * Extrai a localização de fim mais profunda de um único nó
+         */
+        public ComplexSymbolFactory.Location getDeepestEndLocation(String nodeName, Node node) {
+            if (node == null) {
+                debug("Nó " + nodeName + " é nulo, retornando [0:0]");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            int[] loc = node.getLocation();
+            if (loc == null || loc.length < 4) {
+                debug("Localização do nó " + nodeName + " inválida");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(loc[2], loc[3]);
+            debug("Fim mais profundo do nó " + nodeName + ": " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Extrair a localização de início ou fim de um nó, baseado no parâmetro isEnd
+         */
+        public ComplexSymbolFactory.Location getDeepestLocation(String nodeName, Node node, boolean isEnd) {
+            if (node == null) {
+                debug("Nó " + nodeName + " é nulo, retornando [0:0]");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            int[] loc = node.getLocation();
+            if (loc == null || loc.length < 4) {
+                debug("Localização do nó " + nodeName + " inválida");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(
+                isEnd ? loc[2] : loc[0], 
+                isEnd ? loc[3] : loc[1]
+            );
+            
+            debug("Localização " + (isEnd ? "final" : "inicial") + " do nó " + nodeName + ": " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Obtém a localização de início de um nó da AST
+         */
+        public ComplexSymbolFactory.Location getNodeStartLocation(String nodeName, Node node) {
+            if (node == null || node.getLocation() == null || node.getLocation().length < 2) {
+                debug("Nó " + nodeName + " inválido para localização inicial, retornando [0:0]");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(
+                node.getLocation()[0], node.getLocation()[1]);
+                
+            debug("Início do nó " + nodeName + ": " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Ajusta a localização de fim para estar uma coluna à direita
+         */
+        public ComplexSymbolFactory.Location adjustEndLocation(ComplexSymbolFactory.Location loc) {
+            if (loc == null || loc.getLine() <= 0) {
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(
+                loc.getLine(), loc.getColumn() + 1);
+                
+            debug("Ajustando localização de: " + formatLocation(loc) + " para: " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Registra informações de depuração sobre blocos
+         */
+        public void debugBlock(String blockType, 
+                            ComplexSymbolFactory.Location startLoc,
+                            ComplexSymbolFactory.Location endLoc) {
+            System.out.println("[DEBUG] " + blockType + 
+                            " from " + formatLocation(startLoc) + 
+                            " to " + formatLocation(endLoc));
+        }
+    }
+
+    private final LocationManager locationManager = new LocationManager();
+
+    private List<Stmt> handlePassBlock(List<Stmt> statements) {
+        if (statements.size() == 1) {
+            Stmt stmt = statements.get(0);
+            if (stmt instanceof ExprStmt) {
+                ExprStmt exprStmt = (ExprStmt) stmt;
+                if (exprStmt.expr instanceof NoneLiteral) {
+                    return new ArrayList<>();
+                }
+            }
+        }
+        return statements;
+    }
+
+    private List<Stmt> buildNestedIfs(List<ElifItem> elifs, List<Stmt> finalElseBodyList, 
+                                    ComplexSymbolFactory.Location finalBlockLocation) {
+        List<Stmt> currentNestedElseBodyList = finalElseBodyList;
+        
+        for (int i = elifs.size() - 1; i >= 0; i--) {
+            ElifItem item = elifs.get(i);
+            
+            ComplexSymbolFactory.Location startLoc = item.getConditionLeft();
+            
+            ComplexSymbolFactory.Location endLoc = finalBlockLocation;
+            
+            System.out.println("[DEBUG] ELIF " + i + " location: [" + 
+                startLoc.getLine() + ":" + startLoc.getColumn() + "] to [" + 
+                endLoc.getLine() + ":" + endLoc.getColumn() + "]");
+            
+            List<Stmt> processedBody = handlePassBlock(item.body);
+            
+            currentNestedElseBodyList = Collections.singletonList(
+                new IfStmt(startLoc, endLoc, 
+                        item.condition,
+                        processedBody,
+                        currentNestedElseBodyList)
+            );
+        }
+        return currentNestedElseBodyList;
+    }
+
+    private List<Stmt> processFinalElse(Block elseBlockOpt) {
+        return elseBlockOpt != null ? elseBlockOpt.getStatements() : new ArrayList<>();
+    }
+
+    private ComplexSymbolFactory.Location lastDedentLocation = new ComplexSymbolFactory.Location(0, 0);
+    private int lastIndentLevel = 0;
+    private void updateLastDedentLocation(ComplexSymbolFactory.Location loc) {
+        if (loc != null && loc.getLine() > 0) {
+            System.out.println("[DEBUG] Atualizando lastDedentLocation para [" + loc.getLine() + ":1]");
+            
+            lastDedentLocation = new ComplexSymbolFactory.Location(loc.getLine(), 1);
+        }
+    }
+
 :}
-
-
-/**************************************************************************
- *              FEEL FREE TO MODIFY ANYTHING BELOW THIS LINE              
- *
- * The rules provided below parse expressions of the form <INT> + <INT> + ... 
- * You can re-use these rules or edit them as you wish. The start rule
- * should return a node of type Program.
- *
- * Tips: Production rules are usually followed by action code that will be
- * copied to the generated parser to be executed immediately after a reduce
- * operation; that is, when a production rule has been matched. You can name
- * a nonterminal or terminal symbol in a production rule using the colon
- * notation, e.g. expr_stmt ::= expr:e, to get the AST node for the matched
- * expression. In the action code, `e` will be a variable of whatever type
- * has been declared for the corresponding nonterminal, such as `Expr`.
- * Therefore, you can construct an AST Node of type `ExprStmt` with `e` in the
- * constructor: `new ExprStmt(exleft, exright, e)`
- *
- * The variables `exleft` and `exright` are automatically generated by CUP
- * and contain Location objects for the start and end of the expression `e`.
- * You can collect start and line number info for AST nodes by taking the
- * location of the left end of the leftmost symbol in a rule and the
- * location of the right end of the rightmost symbol. The auto-generated
- * variables have names `<sym>xleft` and `<sym>xright`, where <sym> is the
- * name given to the symbol using the colon notation.
- *
- * When you have nonterminals that are lists of things, e.g. List<Stmt> or
- * List<Declaration>, it is helpful to get the leftmost and rightmost
- * source location from within this list; we have provided some utility
- * functions below to do just that.
- **************************************************************************/
 
 
 /* The following code section is copied verbatim to the class that performs
@@ -119,16 +530,54 @@ action code {:
         return new ArrayList<T>();
     }
 
-    /** Return the leftmost non-whitespace location in NODES, or null if NODES
-     *  is empty.  Assumes that the nodes of NODES are ordered in increasing
-     *  order of location, from left to right. */
-    ComplexSymbolFactory.Location getLeft(List<? extends Node> nodes) {
-        if (nodes.isEmpty()) {
-            return null;
+    // Funções auxiliares de localização: 
+    // extraem com segurança as coordenadas (linha/coluna) de nós ou listas,
+    // usando fallback para [0,0] quando necessário. 
+
+    ComplexSymbolFactory.Location getLeftLoc(List<? extends Node> nodes) {
+        if (nodes == null || nodes.isEmpty()) {
+             return new ComplexSymbolFactory.Location(0,0); 
         }
         Node first = nodes.get(0);
-        return new ComplexSymbolFactory.Location(first.getLocation()[0],
-                                                 first.getLocation()[1]);
+         if (first == null || first.getLocation() == null || first.getLocation().length < 2) {
+             return new ComplexSymbolFactory.Location(0,0); 
+         }
+        return new ComplexSymbolFactory.Location(first.getLocation()[0], first.getLocation()[1]);
+    }
+
+    /*
+
+    as funções single, combine, empty são ajudantes gerais para listas,
+        enquanto as funções getLeftLoc, getRightLoc, nodeLeftLoc, nodeRightLoc 
+        são ajudantes específicos para extrair
+        informações de localização 
+     e conveniente para construir os nós da sua AST ChocoPy.
+    
+    */
+     /** Return the rightmost Location from a list of Nodes. */
+    ComplexSymbolFactory.Location getRightLoc(List<? extends Node> nodes) {
+        if (nodes == null || nodes.isEmpty()) {
+            return new ComplexSymbolFactory.Location(0,0); 
+        }
+        Node last = nodes.get(nodes.size() - 1);
+        if (last == null || last.getLocation() == null || last.getLocation().length < 4) {
+             return new ComplexSymbolFactory.Location(0,0); 
+        }
+        return new ComplexSymbolFactory.Location(last.getLocation()[2], last.getLocation()[3]);
+    }
+
+    ComplexSymbolFactory.Location nodeLeftLoc(Node node) {
+        if (node == null || node.getLocation() == null || node.getLocation().length < 2) {
+            return new ComplexSymbolFactory.Location(0,0); 
+        }
+        return new ComplexSymbolFactory.Location(node.getLocation()[0], node.getLocation()[1]);
+    }
+
+    ComplexSymbolFactory.Location nodeRightLoc(Node node) {
+        if (node == null || node.getLocation() == null || node.getLocation().length < 4) {
+             return new ComplexSymbolFactory.Location(0,0); 
+        }
+        return new ComplexSymbolFactory.Location(node.getLocation()[2], node.getLocation()[3]);
     }
 
 :}
@@ -142,73 +591,885 @@ action code {:
  * semantic value of type <type> for these symbols that may be referenced
  * in actions ( {: ... :} ).
  */
-terminal NEWLINE;
-terminal String PLUS; 
-terminal Integer NUMBER; 
-/* Returned by the lexer for erroneous tokens.  Since it does not appear in
- * the grammar, it indicates a syntax error. */
-terminal UNRECOGNIZED;   
+
+/* ================= DECLARAÇÃO DE TERMINAIS ================== */
+
+terminal NEWLINE, INDENT, DEDENT;
+terminal String     ID;
+terminal String     IDSTRING;
+terminal String     STRING;
+terminal BigInteger NUMBER;
+terminal CLASS, PASS, DEF, GLOBAL, NONLOCAL, IF, ELIF, ELSE, WHILE, FOR, IN, RETURN;
+terminal NONE, TRUE, FALSE, NOT, AND, OR, IS;
+terminal LPAREN, RPAREN, COLON, ARROW, COMMA, ASSIGN, LBRACKET, RBRACKET, DOT;
+terminal PLUS, MINUS, TIMES, FLOORDIV, MODULO, EQ, NE, LE, GE, LT, GT;
+terminal IFX, UMINUS;
+terminal UNRECOGNIZED;
+
 
 /* Nonterminal symbols (defined in production rules below).
  * As for terminal symbols, 
  *     non terminal <type> <identifier1>, ..., <identifiern>; 
  * defines the listed nonterminal identifier symbols to have semantic values
  * of type <type>. */
+
+/* ================= DECLARAÇÃO DE NÃO TERMINAIS ================== */
 non terminal Program           program;
-non terminal List<Declaration> program_head;
-non terminal List<Stmt>        stmt_list, opt_stmt_list;
-non terminal Stmt              stmt, expr_stmt;
-non terminal Expr              expr, binary_expr;
+non terminal List<Declaration> def_list, class_body, var_func_def_list, decl_def_list;
+non terminal List<Stmt>        stmt_list, opt_stmt_list, stmt_plus;
+non terminal Stmt              stmt, simple_stmt, if_stmt, while_stmt, for_stmt, assign_stmt_new;
+
+non terminal Declaration       def, var_def, func_def, class_def;
+non terminal Declaration       decl_def, global_decl, nonlocal_decl;
+non terminal TypedVar          typed_var;
+non terminal TypeAnnotation    type, opt_return_type;
+non terminal Block             block;
+non terminal Block             opt_else;
+non terminal Literal           literal;
+
+non terminal List<TypedVar>    typed_var_list, opt_typed_var_list;
+
+/* Ifs elif e else */
+non terminal FuncBody          func_body;
+
+non terminal List<ElifItem>    opt_elif_chain;
+non terminal List<ElifItem>    non_empty_elif_chain;
+
+
+// ================== EXPRESSÕES ==================
+
+non terminal Expr              expr, opt_expr;
+non terminal Expr              logical_expr, rel_expr, arith_expr, term, factor, primary;
+non terminal Expr              if_expr;
+non terminal List<Expr>        expr_list, opt_expr_list;
+non terminal Expr              target;
+
 
 /* Precedences (lowest to highest) for resolving what would otherwise be
  * ambiguities in the form of shift/reduce conflicts.. */
-precedence left PLUS;
+
+precedence right IFX;      
+precedence left OR;
+precedence left AND;
+precedence right NOT;
+precedence nonassoc EQ, NE, LT, GT, LE, GE, IS;
+precedence left PLUS, MINUS;
+precedence left TIMES, FLOORDIV, MODULO;
+precedence right UMINUS; 
+precedence left DOT;
+precedence left LBRACKET;
+precedence left COMMA;
+precedence right ASSIGN;
 
 /* The start symbol. */
 start with program;
 
 
 /*****  GRAMMAR RULES *****/
+/* program ::= [var_def | func_def | class_def]* stmt* */
+/*
 
-program ::= program_head:d opt_stmt_list:s
-        {: RESULT = new Program(d.isEmpty() ? getLeft(s) : getLeft(d),
-                                sxright, d, s, errors);
+Um programa ChocoPy consiste em:
+Uma sequência de definições no topo (declarações de variáveis, funções, classes),
+Seguidas por zero ou mais statements no topo.
+
+*/
+
+program ::= def_list:d opt_stmt_list:s
+        {:
+           ComplexSymbolFactory.Location leftLoc;    
+
+            if (!d.isEmpty()) {
+                Node firstDecl = d.get(0);
+                int[] firstDeclLoc = firstDecl.getLocation();
+                leftLoc = new ComplexSymbolFactory.Location(firstDeclLoc[0], firstDeclLoc[1]);
+            } else if (!s.isEmpty()) {
+                Node firstStmt = s.get(0);
+                int[] firstStmtLoc = firstStmt.getLocation();
+                leftLoc = new ComplexSymbolFactory.Location(firstStmtLoc[0], firstStmtLoc[1]);
+            } else {
+                leftLoc = new ComplexSymbolFactory.Location(1, 1);
+            }
+
+           ComplexSymbolFactory.Location declsLoc = locationManager.getDeepestListEndLocation("declarations", d);
+           ComplexSymbolFactory.Location stmtsLoc = locationManager.getDeepestListEndLocation("statements", s);
+           
+           ComplexSymbolFactory.Location rightLoc = locationManager.getLatestLocation(declsLoc, stmtsLoc);
+           
+           rightLoc = locationManager.adjustEndLocation(rightLoc);
+           
+           if (rightLoc.getLine() == 0) {
+               if (!s.isEmpty()) {
+                   Node lastStmt = s.get(s.size() - 1);
+                   rightLoc = locationManager.adjustEndLocation(locationManager.getDeepestEndLocation("lastStmt", lastStmt));
+               } else if (!d.isEmpty()) {
+                   Node lastDecl = d.get(d.size() - 1);
+                   rightLoc = locationManager.adjustEndLocation(locationManager.getDeepestEndLocation("lastDecl", lastDecl));
+               } else {
+                   rightLoc = new ComplexSymbolFactory.Location(1, 1);
+               }
+           }
+           
+           RESULT = new Program(
+                     leftLoc, 
+                     rightLoc, 
+                     d,
+                     s,
+                     new Errors(new ArrayList<>())
+                   );
         :}
+;
+
+/*
+Lista de definições (Def) é para produzir uma lista de definições (Declaration)
+
+*/
+
+def_list ::= /* empty */
+          {: RESULT = empty(); :}
+          | def_list:dl def:d
+          {: RESULT = combine(dl, d); :}
+          ;
+
+/* 
+agr sim é o definição entao pode ser var_def, func_def ou class_def
+*/
+
+def ::= var_def:d
+      {: RESULT = d; :}
+      | func_def:d
+      {: RESULT = d; :}
+      | class_def:d
+      {: RESULT = d; :}
+      ;
+
+/* 
+
+opt_stmt_list é para produzir uma lista de statements (Stmt) que ou eh vazia ou 
+contem uma lista de statements (Stmt)
+
+*/
+opt_stmt_list ::= /* empty */
+            {: RESULT = empty(); :}
+            | stmt_list:sl
+            {: RESULT = sl; :}
+            ;
+
+/*
+
+stmt_list é para produzir uma lista de statements (Stmt) SE FOR VAZIA O OPT_STMT_LIST VAI TRATA
+contem uma lista de statements (Stmt) e um statement (Stmt)
+Linha com error implementa recuperação de erro local, descartando o erro e continuando com a lista acumulada.
+*/
+stmt_list ::= stmt:s
+            {: RESULT = single(s); :} 
+            | stmt_list:sl stmt:s
+            {: RESULT = combine(sl, s); :}
+            | stmt_list:sl error
+            {: RESULT = sl; :}
+            ;
+
+
+
+
+/* 
+defini uma variavel com tipo e valor literal. sec 2.8.3 chocopy
+
+x: int = 10
+ */
+var_def ::= typed_var:tv ASSIGN literal:lit NEWLINE
+          {: RESULT = new VarDef(tvxleft, litxright, tv, lit); :}
+          ;
+
+
+/* 
+
+class_def é para produzir uma classe (ClassDef)
+ex: 
+class Foo(object):
+    x: int = 0
+    def method(self: "Foo") -> int:
+        return self.x
+
+
+Nome da classe
+
+Nome da superclasse (obrigatório)
+
+Dois pontos + NEWLINE
+
+Bloco indentado (INDENT ... DEDENT) com atributos e métod
+*/
+
+
+class_def ::= CLASS:c ID:name LPAREN ID:superclass RPAREN COLON NEWLINE INDENT class_body:body DEDENT:ded
+{: 
+    ComplexSymbolFactory.Location startLoc = cxleft;
+    
+    ComplexSymbolFactory.Location bodyEndLoc = locationManager.getDeepestListEndLocation("body", body);
+    
+    if (dedxright.getLine() > bodyEndLoc.getLine() || 
+        (dedxright.getLine() == bodyEndLoc.getLine() && dedxright.getColumn() > bodyEndLoc.getColumn())) {
+        bodyEndLoc = new ComplexSymbolFactory.Location(dedxright.getLine(), 0);
+    }
+    
+    RESULT = new ClassDef(
+          startLoc, 
+          bodyEndLoc, 
+          new Identifier(namexleft, namexright, name), 
+          new Identifier(superclassxleft, superclassxright, superclass), 
+          body); 
+:}
+    ;
+/* 
+
+class_body reconhece uma classe sem corpo real, ou com atributos e metodos
+
+PASS gera lista vazia
+var_func_def_list retorna uma lista de declarações
+
+*/
+
+class_body ::= PASS NEWLINE
+             {: RESULT = empty(); :}
+             | var_func_def_list:vfdl
+             {: RESULT = vfdl; :}
+             ;
+
+/* 
+
+var_func_def_list é para produzir uma lista de declarações que podem ser:
+    - atributos
+    - metodos
+
+x: int = 0
+y: bool = False
+def metodo(self: "C") -> int:
+    return self.x
+
+*/
+
+var_func_def_list ::= var_def:vd
+                    {: RESULT = single(vd); :}
+                    | func_def:fd
+                    {: RESULT = single(fd); :}
+                    | var_func_def_list:vfdl var_def:vd
+                    {: RESULT = combine(vfdl, vd); :}
+                    | var_func_def_list:vfdl func_def:fd
+                    {: RESULT = combine(vfdl, fd); :}
+                    ;
+
+/* 
+
+func_def é para reconhecer uma função ou metodo 
+ID:name: nome da função
+opt_typed_var_list: parâmetros com tipo
+opt_return_type: tipo de retorno opcional (pode ser omitido)
+func_body: lista de statements e declarações (return, if, etc.)
+empty(): por enquanto não há tratamento de global/nonlocal aqui
+
+*/
+
+func_def ::= DEF:d ID:name LPAREN opt_typed_var_list:params RPAREN opt_return_type:returnType COLON:colon NEWLINE INDENT func_body:body DEDENT:ded
+{: 
+    ComplexSymbolFactory.Location startLoc = dxleft;
+    
+    ComplexSymbolFactory.Location bodyDeclsLoc = locationManager.getDeepestListEndLocation("funcBodyDecls", body.declarations);
+    ComplexSymbolFactory.Location bodyStmtsLoc = locationManager.getDeepestListEndLocation("funcBodyStmts", body.statements);
+    ComplexSymbolFactory.Location bodyEndLoc = locationManager.getLatestLocation(bodyDeclsLoc, bodyStmtsLoc);
+    
+    ComplexSymbolFactory.Location endLoc = locationManager.getBlockEndLocation(
+        "FuncDef(" + name + ")", bodyEndLoc, dedxright);
+    
+    List<Stmt> processedStmts = handlePassBlock(body.statements);
+    
+
+    if (returnType instanceof ClassType && "<None>".equals(((ClassType)returnType).className)) {
+        ((ClassType)returnType).setLocation(new int[]{colonxright.getLine(), colonxright.getColumn(), 
+                                                    colonxright.getLine(), colonxright.getColumn()});
+    }
+
+    RESULT = new FuncDef(startLoc, endLoc,
+                       new Identifier(namexleft, namexright, name), 
+                       params, returnType,
+                       body.declarations, processedStmts);
+:}
+    ;
+
+
+
+/*
+
+opt_typed_var_list é para parametros formais q sao opcionais
+def foo(x: int, y: int): ...
+def bar(): ...
+se tiver vazio retorna lista vazia
+se tiver parametro manda o typed_var_list
+
+*/
+opt_typed_var_list ::= /* empty */
+                     {: RESULT = empty(); :}
+                     | typed_var_list:tvl
+                     {: RESULT = tvl; :}
+                     ;
+
+/* 
+
+typed_var_list é para produzir uma lista de parametros de tipos
+x: int
+x: int, y: bool, z: str
+
+entao ou é uma um typed_var (com 1 elemento) ou a gnt combina a lista anterior com o novo typed_var
+
+*/
+
+typed_var_list ::= typed_var:tv
+                 {: RESULT = single(tv); :}
+                 | typed_var_list:tvl COMMA typed_var:tv
+                 {: RESULT = combine(tvl, tv); :}
+                 ;
+
+/* 
+
+opt_return_type é para produzir um tipo de retorno opcional
+def f(x: int) -> int:
+def g():  # sem anotação de retorno
+
+se tiver vazio retorna null
+se tiver tipo de retorno manda o type
+
+*/
+
+opt_return_type ::= /* empty */
+        {: 
+            RESULT = new ClassType(
+                new ComplexSymbolFactory.Location(0, 0),
+                new ComplexSymbolFactory.Location(0, 0),
+                "<None>"
+            );
+        :}
+        | ARROW type:t
+        {: RESULT = t; :}
         ;
 
-/* Initial list of declarations. */
-program_head ::= /* not implemented; currently matches empty string */
-                                     {: RESULT = empty(); :}
-                ;
 
-opt_stmt_list ::=                    {: RESULT = empty(); :}
-                | stmt_list:s        {: RESULT = s; :}
-                ;
+/*
 
-stmt_list ::= stmt:s                 {: RESULT = single(s); :}
-            | stmt_list:l stmt:s     {: RESULT = combine(l, s); :}
-            | stmt_list:l error      {: RESULT = l; :}
-            /* If there is a syntax error in the source, this says to discard
-             * symbols from the parsing stack and perform reductions until
-             * there is a stmt_list on top of the stack, and then to discard
-             * input symbols until it is possible to shift again, reporting
-             * a syntax error. */
+func_body é para produzir uma lista de declarações e statements
+
+*/
+
+func_body ::= decl_def_list:ddl stmt_plus:sp
+            {: RESULT = new FuncBody(ddl, sp); :}
             ;
 
-stmt ::= expr_stmt:s NEWLINE {: RESULT = s; :}
+
+/*
+
+decl_def_list eh para reconhecer declaracoes dentro de uma funcao
+por ex: 
+
+global x
+nonlocal y
+def interna(): ...
+
+Caso esteja vazio - retorna lista vazia.
+Caso tenha várias - acumula com combine(x, ..., z).
+
+*/
+
+decl_def_list ::= /* empty */
+                {: RESULT = empty(); :}
+                | decl_def_list:ddl decl_def:dd
+                {: RESULT = combine(ddl, dd); :}
+                ;
+
+/*
+
+decl_def eh para reconhecer  a um tipo diferente de Declaração
+
+Produção	    Exemplo em ChocoPy	Classe AST
+global_decl	    global x	        GlobalDecl
+nonlocal_decl	nonlocal y	        NonLocalDecl
+var_def	        x: int = 0	        VarDef
+func_def	    def interna(): ...	FuncDef
+
+*/
+decl_def ::= global_decl:gd
+           {: RESULT = gd; :}
+           | nonlocal_decl:nd
+           {: RESULT = nd; :}
+           | var_def:vd
+           {: RESULT = vd; :}
+           | func_def:fd
+           {: RESULT = fd; :}
+           ;
+
+
+/*
+
+global_decl eh para reconhecer uma declaracao global
+ex: 
+global x
+
+
+
+*/
+
+global_decl ::= GLOBAL:g ID:id NEWLINE:n
+              {: 
+                 ComplexSymbolFactory.Location endLoc = idxright;
+                 
+                 RESULT = new GlobalDecl(gxleft, endLoc, new Identifier(idxleft, idxright, id)); 
+              :}
               ;
 
-expr_stmt ::= expr:e    {: RESULT = new ExprStmt(exleft, exright, e); :}
+/*
+
+nonlocal_decl eh para reconhecer uma declaracao nonlocal
+ex: 
+nonlocal y
+
+
+*/
+nonlocal_decl ::= NONLOCAL:nl ID:id NEWLINE:n
+                {: 
+                   ComplexSymbolFactory.Location endLoc = idxright;
+                   
+                   RESULT = new NonLocalDecl(nlxleft, endLoc, new Identifier(idxleft, idxright, id)); 
+                :}
+                ;
+
+/*
+
+typed_var eh para reconhecer um tipo de variavel
+ex: 
+x: int
+
+*/
+
+typed_var ::= ID:id COLON type:t
+            {: RESULT = new TypedVar(idxleft, txright, new Identifier(idxleft, idxright, id), t); :}
             ;
 
-expr ::= binary_expr:e  {: RESULT = e; :}
-       | NUMBER:n       {: RESULT = new IntegerLiteral(nxleft, nxright, n); :}
+
+/* 
+O Type é para reconhecer um tipo
+ent ele reconhe tipos simples 
+int
+str
+bool
+MyClass
+
+ClassType é uma subclasse de TypeAnnotation
+
+ai dps a gente tem os tipos compostos q eh
+
+list[int]
+list[str]
+list[MyClass]
+
+*/
+
+type ::= ID:id
+       {: RESULT = new ClassType(idxleft, idxright, id); :}
+       | IDSTRING:id
+       {: RESULT = new ClassType(idxleft, idxright, id); :}
+       | STRING:s
+       {: RESULT = new ClassType(sxleft, sxright, s); :}
+       | LBRACKET:lbr type:t RBRACKET:rbr
+       {: RESULT = new ListType(lbrxleft, rbrxright, t); :}
        ;
 
 
-/* A binary expression, illustrating how to find the left and right
- * source position of a phrase. */
-binary_expr ::= expr:e1 PLUS:op expr:e2
-                        {: RESULT = new BinaryExpr(e1xleft, e2xright,
-                                                   e1, op, e2); :}
+/* reconhece qualquer stament valido
+
+divide entre
+simple_stmt: expressao, retorno, atribuicao e pass
+if_stmt: if, elif, else
+while_stmt: while
+for_stmt: for
+*/
+
+stmt ::= simple_stmt:s NEWLINE
+       {: RESULT = s; :}
+       | if_stmt:s
+       {: RESULT = s; :}
+       | while_stmt:s
+       {: RESULT = s; :}
+       | for_stmt:s
+       {: RESULT = s; :}
+       ;
+
+/*
+
+/*
+ 
+garantia q os stmt tenha pelo menos 1 stmt 
+
+
+*/
+stmt_plus ::= stmt:s
+            {: RESULT = single(s); :}
+            | stmt_plus:sp stmt:s
+            {: RESULT = combine(sp, s); :}
+            ;
+
+/* 
+Abrange 4 statements:
+Forma	        AST gerada	Exemplo
+expressão	    ExprStmt	print(x)
+return <expr>?	ReturnStmt	return x + 1
+a = b = c	    AssignStmt	x = y = 1
+ */
+simple_stmt ::= PASS:p
+              {: RESULT = new ExprStmt(pxleft, pxright, new NoneLiteral(pxleft, pxright)); :}
+              | RETURN:r opt_expr:e
+              {: RESULT = new ReturnStmt(rxleft, 
+                                      (e != null) ? exright : rxright, e); :}
+              | assign_stmt_new:a
+              {: RESULT = a; :}
+              | expr:e
+              {: RESULT = new ExprStmt(exleft, exright, e); :}
               ;
+
+assign_stmt_new ::= target:t ASSIGN expr:e
+              {: RESULT = new AssignStmt(txleft, exright, single(t), e); :}
+              | target:t ASSIGN assign_stmt_new:a
+              {:
+                  AssignStmt as = (AssignStmt)a;
+                  List<Expr> newTargets = new ArrayList<>();
+                  newTargets.add(t); 
+                  newTargets.addAll(as.targets);
+                  RESULT = new AssignStmt(txleft, axright, newTargets, as.value);
+              :}
+              ;
+
+
+if_stmt ::= IF:kw expr:condition COLON block:thenBlock opt_elif_chain:elifs opt_else:elseBlockOpt
+{:
+    System.out.println("[DEBUG] Processando if_stmt");
+    
+    List<Stmt> finalElseBody = processFinalElse(elseBlockOpt);
+    List<Stmt> currentNestedElseBody = finalElseBody;
+    
+    ComplexSymbolFactory.Location finalBlockLocation;
+    
+    if (elseBlockOpt != null) {
+        finalBlockLocation = new ComplexSymbolFactory.Location(elseBlockOpt.getEndLocation().getLine(), 1);
+        System.out.println("[DEBUG] IF usa localização do else: [" + 
+                           finalBlockLocation.getLine() + ":" + finalBlockLocation.getColumn() + "]");
+    } else if (elifs != null && !elifs.isEmpty()) {
+        ElifItem lastElif = elifs.get(elifs.size() - 1);
+        finalBlockLocation = new ComplexSymbolFactory.Location(lastElif.getBodyRight().getLine(), 1);
+        System.out.println("[DEBUG] IF usa localização do último elif: [" + 
+                           finalBlockLocation.getLine() + ":" + finalBlockLocation.getColumn() + "]");
+    } else {
+        finalBlockLocation = new ComplexSymbolFactory.Location(thenBlock.getEndLocation().getLine(), 1);
+        System.out.println("[DEBUG] IF usa localização do bloco then: [" + 
+                           finalBlockLocation.getLine() + ":" + finalBlockLocation.getColumn() + "]");
+    }
+    
+    if (elifs != null) {
+        currentNestedElseBody = buildNestedIfs(elifs, finalElseBody, finalBlockLocation);
+    }
+    
+    List<Stmt> processedThenBody = handlePassBlock(thenBlock.getStatements());
+    
+    RESULT = new IfStmt(kwxleft, finalBlockLocation, condition, 
+                      processedThenBody, 
+                      currentNestedElseBody);
+:}
+;
+
+opt_elif_chain ::= /* empty */
+                 {: RESULT = null; :} 
+                 | non_empty_elif_chain:nec
+                 {: RESULT = nec; :}
+                 ;
+
+non_empty_elif_chain ::= ELIF:kw expr:condition COLON block:bodyBlock
+                {:
+                    List<ElifItem> list = new ArrayList<>();
+                    list.add(new ElifItem(condition, bodyBlock.getStatements(),
+                                        kwxleft, nodeRightLoc(condition),
+                                        bodyBlock.getStartLocation(), bodyBlock.getEndLocation()));
+                    RESULT = list;
+                :}
+                | non_empty_elif_chain:chain ELIF:kw expr:condition COLON block:bodyBlock
+                {:
+                    chain.add(new ElifItem(condition, bodyBlock.getStatements(),
+                                        kwxleft, nodeRightLoc(condition),
+                                        bodyBlock.getStartLocation(), bodyBlock.getEndLocation()));
+                    RESULT = chain;
+                :}
+                     ;
+
+opt_else ::= /* empty */ {: 
+                          System.out.println("[DEBUG] No else clause found");
+                          RESULT = null; 
+                        :}
+           | ELSE:kw COLON block:b {: 
+                                     System.out.println("[DEBUG] Found else clause with " + b.getStatements().size() + " statements");
+                                     RESULT = b; 
+                                   :} 
+           ;
+
+block ::= NEWLINE:nl INDENT:ind stmt_plus:stmts DEDENT:ded
+        {: 
+            updateLastDedentLocation(dedxleft);
+            
+            ComplexSymbolFactory.Location startLoc = !stmts.isEmpty() ? 
+                locationManager.getDeepestLocation("stmts.get(0)", stmts.get(0), false) : 
+                indxleft;
+            
+            ComplexSymbolFactory.Location contentEndLoc = locationManager.getDeepestListEndLocation("stmts", stmts);
+
+            if (dedxleft.getLine() > contentEndLoc.getLine()) {
+                contentEndLoc = new ComplexSymbolFactory.Location(dedxleft.getLine(), 0);
+            }
+
+            System.out.println("[DEBUG] Block com último statement em [" + contentEndLoc.getLine() + 
+                            ":" + contentEndLoc.getColumn() + "], usando contentEndLoc = [" + 
+                            contentEndLoc.getLine() + ":" + contentEndLoc.getColumn() + "]");
+            
+            RESULT = new Block(startLoc, contentEndLoc, stmts); 
+        :}
+        ;
+
+/*
+
+while_stmt reconhece uma estrutura de repeticao while
+
+while cond:
+    stmt1
+    stmt2
+
+    while q eh token esperado
+    expr:condition eh a condicao
+    colon que eh obrigatorio apos a condicao
+    block:body eh o corpo identado do while
+
+*/
+
+while_stmt ::= WHILE:w expr:condition COLON block:b
+{: 
+    ComplexSymbolFactory.Location startLoc = wxleft;
+    
+    ComplexSymbolFactory.Location contentEndLoc = locationManager.getDeepestListEndLocation(
+        "whileBody", b.getStatements());
+    
+    ComplexSymbolFactory.Location endLoc = locationManager.getBlockEndLocation(
+        "WhileStmt", contentEndLoc, b.getEndLocation());
+    
+    List<Stmt> processedBody = handlePassBlock(b.getStatements());
+    
+    RESULT = new WhileStmt(startLoc, endLoc, condition, processedBody);
+:}
+             ;
+
+
+/*
+
+for_stmt reconhece uma estrutura de repeticao for
+
+for ID:id IN expr:iterable COLON  -> for id in iterable:
+    block:body corpo identado
+    idxleft e bodyxright sao a esquerda e direita do for
+    new Identifier(idxleft, idxright, id) eh o id do for
+    iterable eh o iterable
+
+*/
+
+
+for_stmt ::= FOR:f ID:var IN expr:iterable COLON block:b
+{: 
+    ComplexSymbolFactory.Location startLoc = fxleft;
+    
+    ComplexSymbolFactory.Location contentEndLoc = locationManager.getDeepestListEndLocation(
+        "forBody", b.getStatements());
+    
+    ComplexSymbolFactory.Location endLoc = locationManager.getBlockEndLocation(
+        "ForStmt", contentEndLoc, b.getEndLocation());
+    
+    List<Stmt> processedBody = handlePassBlock(b.getStatements());
+    
+    RESULT = new ForStmt(startLoc, endLoc, 
+                       new Identifier(varxleft, varxright, var), 
+                       iterable, 
+                       processedBody);
+:}
+           ;
+
+/* literal ::= None | True | False | INTEGER | IDSTRING | STRING */
+literal ::= NONE:n
+          {: RESULT = new NoneLiteral(nxleft, nxright); :}
+          | TRUE:t
+          {: RESULT = new BooleanLiteral(txleft, txright, true); :}
+          | FALSE:f
+          {: RESULT = new BooleanLiteral(fxleft, fxright, false); :}
+          | NUMBER:n
+           {:
+              try {
+                  int intValue = n.intValueExact(); 
+                  RESULT = new IntegerLiteral(nxleft, nxright, intValue);
+              } catch (ArithmeticException e) {
+                  parser.report_error("Integer literal out of range: " + n.toString(), nxleft);
+                  RESULT = new IntegerLiteral(nxleft, nxright, 0); 
+              }
+          :}
+          | IDSTRING:is
+          {: RESULT = new StringLiteral(isxleft, isxright, is); :}
+          | STRING:s
+          {: RESULT = new StringLiteral(sxleft, sxright, s); :}
+          ;
+
+
+/* 
+Expressão principal - abrange tudo
+*/
+
+expr ::= logical_expr:e
+       {: RESULT = e; :}
+       | if_expr:ie
+       {: RESULT = ie; :}
+       ;
+
+/* 
+Expressões lógicas (and/or/not)
+*/
+logical_expr ::= rel_expr:e 
+               {: RESULT = e; :}
+               | NOT:n logical_expr:e
+               {: RESULT = new UnaryExpr(nxleft, exright, "not", e); :}
+               | logical_expr:e1 AND logical_expr:e2
+               {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "and", e2); :}
+               | logical_expr:e1 OR logical_expr:e2
+               {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "or", e2); :}
+               ;
+
+/* 
+Expressões relacionais (==, !=, <, >, <=, >=, is)
+*/
+rel_expr ::= arith_expr:e
+           {: RESULT = e; :}
+           | rel_expr:e1 EQ arith_expr:e2
+           {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "==", e2); :}
+           | rel_expr:e1 NE arith_expr:e2
+           {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "!=", e2); :}
+           | rel_expr:e1 LT arith_expr:e2
+           {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "<", e2); :}
+           | rel_expr:e1 GT arith_expr:e2
+           {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, ">", e2); :}
+           | rel_expr:e1 LE arith_expr:e2
+           {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "<=", e2); :}
+           | rel_expr:e1 GE arith_expr:e2
+           {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, ">=", e2); :}
+           | rel_expr:e1 IS arith_expr:e2
+           {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "is", e2); :}
+           ;
+
+
+
+if_expr ::= logical_expr:thenExpr IF expr:condition ELSE expr:elseExpr
+         {: 
+             ComplexSymbolFactory.Location startLoc = nodeLeftLoc(thenExpr);
+             ComplexSymbolFactory.Location endLoc;
+             
+             if (elseExpr instanceof IfExpr) {
+                 int[] elseLoc = elseExpr.getLocation();
+                 if (elseLoc != null && elseLoc.length >= 4) {
+                     endLoc = new ComplexSymbolFactory.Location(elseLoc[2], elseLoc[3]);
+                 } else {
+                     endLoc = nodeRightLoc(elseExpr);
+                 }
+             } else {
+                 endLoc = nodeRightLoc(elseExpr);
+             }
+             
+             RESULT = new IfExpr(startLoc, endLoc, condition, thenExpr, elseExpr); 
+         :}
+%prec IFX
+         ;
+
+// Expressões aritméticas (+, -, *, //, %)
+arith_expr ::= term:t
+             {: RESULT = t; :}
+             | arith_expr:e1 PLUS term:e2
+             {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "+", e2); :}
+             | arith_expr:e1 MINUS term:e2
+             {: RESULT = new BinaryExpr(e1xleft, e2xright, e1, "-", e2); :}
+             ;
+
+// Termos (*, //, %)
+term ::= factor:f
+       {: RESULT = f; :}
+       | term:t1 TIMES factor:t2
+       {: RESULT = new BinaryExpr(t1xleft, t2xright, t1, "*", t2); :}
+       | term:t1 FLOORDIV factor:t2
+       {: RESULT = new BinaryExpr(t1xleft, t2xright, t1, "//", t2); :}
+       | term:t1 MODULO factor:t2
+       {: RESULT = new BinaryExpr(t1xleft, t2xright, t1, "%", t2); :}
+       ;
+
+// Fatores (unários, primários)
+factor ::= primary:p
+         {: RESULT = p; :}
+         | MINUS:m factor:f
+         {: RESULT = new UnaryExpr(mxleft, fxright, "-", f); :}
+         %prec UMINUS
+         ;
+
+// Expressões primárias (mais básicas)
+primary ::= ID:id
+          {: RESULT = new Identifier(idxleft, idxright, id); :}
+          | literal:lit
+          {: RESULT = lit; :}
+          | LBRACKET:lbr opt_expr_list:elements RBRACKET:rbr
+          {: RESULT = new ListExpr(lbrxleft, rbrxright, elements); :}
+          | LPAREN:lpa expr:e RPAREN:rpa
+          {: RESULT = e; :}
+          | primary:object DOT ID:member
+          {: RESULT = new MemberExpr(objectxleft, memberxright, object,
+                                   new Identifier(memberxleft, memberxright, member)); :}
+          | primary:list LBRACKET expr:index RBRACKET:rbr
+          {: RESULT = new IndexExpr(listxleft, rbrxright, list, index); :}
+          | primary:object DOT ID:method LPAREN opt_expr_list:args RPAREN:rpa
+          {: MemberExpr member = new MemberExpr(objectxleft, methodxright, object,
+                                          new Identifier(methodxleft, methodxright, method));
+             RESULT = new MethodCallExpr(objectxleft, rpaxright, member, 
+                                      (args != null) ? args : empty()); :}
+          | ID:id LPAREN opt_expr_list:args RPAREN:rpa
+          {: RESULT = new CallExpr(idxleft, rpaxright, 
+                                new Identifier(idxleft, idxright, id), 
+                                (args != null) ? args : empty()); :}
+          ;
+
+target ::= ID:id
+         {: RESULT = new Identifier(idxleft, idxright, id); :}
+         | primary:object DOT ID:member
+         {: RESULT = new MemberExpr(objectxleft, memberxright, object,
+                                  new Identifier(memberxleft, memberxright, member)); :}
+         | primary:list LBRACKET expr:index RBRACKET:rbr
+         {: RESULT = new IndexExpr(listxleft, rbrxright, list, index); :}
+         ;
+
+opt_expr_list ::= /* empty */
+                {: RESULT = empty(); :}
+                | expr_list:el
+                {: RESULT = el; :}
+                | expr_list:el COMMA
+                {: RESULT = el; :}
+                ;
+
+expr_list ::= expr:e
+            {: RESULT = single(e); :}
+            | expr_list:el COMMA expr:e
+            {: RESULT = combine(el, e); :}
+            ;
+
+opt_expr ::= /* empty */
+           {: RESULT = null; :}
+           | expr:e
+           {: RESULT = e; :}
+           ;
