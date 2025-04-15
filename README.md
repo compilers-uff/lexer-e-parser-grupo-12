@@ -50,8 +50,22 @@ To sync with updates upstream:
 
 Team member 1: 
 
-Isadora Pacheco Ribeiro
-Horas: 15-20 horas. 
+
+# Informações
+
+Equipe:Isadora Ribeiro (develop-asunnya@outlook.com)
+
+Horas estimadas: 15-20 horas. 
+
+Agradeço a recomendação de utilização do estudo de estados do JFlex, vinda dos requisitos desse trabalho PA1. 
+
+A documentação foi feita com base no que eu escrevi com refinamento de modelos generativos, após isso, houve uma revisão minha. Também foi utilizado esses modelos para melhor entendimento dos arquivos enviados, como language_reference.pdf
+
+Explicações sobre o frontend que estavamos gerando e os manuais de Jflex e .CUP foram transcritos de HTML para .md com a ferramenta Docling. 
+
+Também utilizei o DragonBook para entender melhor sobre os compiladores. 
+
+
 
 # Explicações
 
@@ -65,6 +79,16 @@ Para isso, eu criei 2 estados (inicialmente era apenas o estado de String, ai de
 
 Também outro diferencial foi a customização da função do scanner de next_tokens, 
 Eu usei a diretiva de %function para criar uma função customizada para o scanner.
+
+
+Lembrando que no é no Chocopy.jflex e as linhas principais ficam com handleIndentation. 
+
+Isso foi descrito na seção 3.1 do language_reference do chocopy que fala sobre os tokens léxicos INDENT e DEDENT. Como se fosse {} 
+
+
+A característica mais díficil foi a construção das estruturas aninhadas. E as localizações na AST. Por isso, foi criado classes auxiliares para isso, todas elas, explicadas abaixo. 
+
+# Documentação
 
 ## Sistema de Indentação
 
