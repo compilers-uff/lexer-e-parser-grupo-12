@@ -104,9 +104,9 @@ parser code {:
             this.declarations = declarations;
             this.statements = statements;
             
-            ComplexSymbolFactory.Location declsEndLoc = getDeepestListEndLocation(declarations);
-            ComplexSymbolFactory.Location stmtsEndLoc = getDeepestListEndLocation(statements);
-            this.endLocation = getLatestLocation(declsEndLoc, stmtsEndLoc);
+            ComplexSymbolFactory.Location declsEndLoc = locationManager.getDeepestListEndLocation("declarations", declarations);
+            ComplexSymbolFactory.Location stmtsEndLoc = locationManager.getDeepestListEndLocation("statements", statements);
+            this.endLocation = locationManager.getLatestLocation(declsEndLoc, stmtsEndLoc);
         }
 
         public ComplexSymbolFactory.Location getEndLocation() {
@@ -123,11 +123,10 @@ parser code {:
             this.statements = (statements != null) ? statements : new ArrayList<>();
             
             this.startLocation = !this.statements.isEmpty() ? 
-                getDeepestLocation(this.statements.get(0), false) : 
+                locationManager.getDeepestLocation("block-start", this.statements.get(0), false) : 
                 new ComplexSymbolFactory.Location(0,0);
             
-            this.endLocation = getDeepestListEndLocation(this.statements);
-
+            this.endLocation = locationManager.getDeepestListEndLocation("block-statements", this.statements);
         }
         
         public Block(ComplexSymbolFactory.Location left, ComplexSymbolFactory.Location right, List<Stmt> statements) {
@@ -157,16 +156,9 @@ parser code {:
         }
         
         public ComplexSymbolFactory.Location getDeepRight() {
-            ComplexSymbolFactory.Location deepLoc = getDeepestListEndLocation(statements);
+            ComplexSymbolFactory.Location deepLoc = locationManager.getDeepestListEndLocation("block-stmts-deep", statements);
             return (deepLoc.getLine() > 0) ? deepLoc : endLocation;
         }
-    }
-
-    private ComplexSymbolFactory.Location getNodeStartLocation(Node node) {
-        if (node == null || node.getLocation() == null || node.getLocation().length < 2) {
-            return new ComplexSymbolFactory.Location(0, 0);
-        }
-        return new ComplexSymbolFactory.Location(node.getLocation()[0], node.getLocation()[1]);
     }
 
   /*
@@ -217,8 +209,8 @@ parser code {:
         private static final int STANDARD_BLOCK_END_COLUMN = 1; 
 
         /**
-        * Registra informações de depuração sobre localizações
-        */
+         * Registra informações de depuração sobre localizações
+         */
         public void debug(String message, ComplexSymbolFactory.Location... locations) {
             if (!DEBUG_LOCATIONS) return;
             
@@ -230,16 +222,16 @@ parser code {:
         }
         
         /**
-        * Formata uma localização para depuração
-        */
+         * Formata uma localização para depuração
+         */
         private String formatLocation(ComplexSymbolFactory.Location loc) {
             if (loc == null) return "null";
             return String.format("[%d:%d]", loc.getLine(), loc.getColumn());
         }
         
         /**
-        * Obtém a localização final padronizada para um bloco
-        */
+         * Obtém a localização final padronizada para um bloco
+         */
         public ComplexSymbolFactory.Location getBlockEndLocation(
                 String blockType,
                 ComplexSymbolFactory.Location contentEndLoc, 
@@ -248,7 +240,6 @@ parser code {:
             debug("Calculando fim do bloco " + blockType, 
                 contentEndLoc, dedentLoc);
             
-         
             if (contentEndLoc != null && contentEndLoc.getLine() > 0) {
                 int endLine = contentEndLoc.getLine();
                 int endColumn = contentEndLoc.getColumn() + 1;
@@ -257,7 +248,6 @@ parser code {:
                 return new ComplexSymbolFactory.Location(endLine, endColumn);
             }
             
-           
             if (dedentLoc != null && dedentLoc.getLine() > 0) {
                 int endLine = dedentLoc.getLine();
                 debug("  Usando linha do DEDENT: " + endLine);
@@ -269,8 +259,8 @@ parser code {:
         }
         
         /**
-        * Obtém a localização final para uma expressão
-        */
+         * Obtém a localização final para uma expressão
+         */
         public ComplexSymbolFactory.Location getExprEndLocation(
                 String exprType,
                 ComplexSymbolFactory.Location exprLoc) {
@@ -291,8 +281,8 @@ parser code {:
         }
         
         /**
-        * Obtém a localização mais à direita/tardia entre duas localizações
-        */
+         * Obtém a localização mais à direita/tardia entre duas localizações
+         */
         public ComplexSymbolFactory.Location getLatestLocation(
                 ComplexSymbolFactory.Location loc1, 
                 ComplexSymbolFactory.Location loc2) {
@@ -319,8 +309,8 @@ parser code {:
         }
         
         /**
-        * Extrai a localização de início mais profunda de uma lista de nós
-        */
+         * Extrai a localização de início mais profunda de uma lista de nós
+         */
         public ComplexSymbolFactory.Location getDeepestListStartLocation(String listName, List<? extends Node> nodes) {
             if (nodes == null || nodes.isEmpty()) {
                 debug("Lista " + listName + " vazia, retornando [0:0]");
@@ -341,8 +331,8 @@ parser code {:
         }
         
         /**
-        * Extrai a localização de fim mais profunda de uma lista de nós
-        */
+         * Extrai a localização de fim mais profunda de uma lista de nós
+         */
         public ComplexSymbolFactory.Location getDeepestListEndLocation(String listName, List<? extends Node> nodes) {
             if (nodes == null || nodes.isEmpty()) {
                 debug("Lista " + listName + " vazia, retornando [0:0]");
@@ -368,8 +358,8 @@ parser code {:
         }
         
         /**
-        * Extrai a localização de fim mais profunda de um único nó
-        */
+         * Extrai a localização de fim mais profunda de um único nó
+         */
         public ComplexSymbolFactory.Location getDeepestEndLocation(String nodeName, Node node) {
             if (node == null) {
                 debug("Nó " + nodeName + " é nulo, retornando [0:0]");
@@ -386,8 +376,65 @@ parser code {:
             debug("Fim mais profundo do nó " + nodeName + ": " + formatLocation(result));
             return result;
         }
-
-
+        
+        /**
+         * Extrair a localização de início ou fim de um nó, baseado no parâmetro isEnd
+         */
+        public ComplexSymbolFactory.Location getDeepestLocation(String nodeName, Node node, boolean isEnd) {
+            if (node == null) {
+                debug("Nó " + nodeName + " é nulo, retornando [0:0]");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            int[] loc = node.getLocation();
+            if (loc == null || loc.length < 4) {
+                debug("Localização do nó " + nodeName + " inválida");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(
+                isEnd ? loc[2] : loc[0], 
+                isEnd ? loc[3] : loc[1]
+            );
+            
+            debug("Localização " + (isEnd ? "final" : "inicial") + " do nó " + nodeName + ": " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Obtém a localização de início de um nó da AST
+         */
+        public ComplexSymbolFactory.Location getNodeStartLocation(String nodeName, Node node) {
+            if (node == null || node.getLocation() == null || node.getLocation().length < 2) {
+                debug("Nó " + nodeName + " inválido para localização inicial, retornando [0:0]");
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(
+                node.getLocation()[0], node.getLocation()[1]);
+                
+            debug("Início do nó " + nodeName + ": " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Ajusta a localização de fim para estar uma coluna à direita
+         */
+        public ComplexSymbolFactory.Location adjustEndLocation(ComplexSymbolFactory.Location loc) {
+            if (loc == null || loc.getLine() <= 0) {
+                return new ComplexSymbolFactory.Location(0, 0);
+            }
+            
+            ComplexSymbolFactory.Location result = new ComplexSymbolFactory.Location(
+                loc.getLine(), loc.getColumn() + 1);
+                
+            debug("Ajustando localização de: " + formatLocation(loc) + " para: " + formatLocation(result));
+            return result;
+        }
+        
+        /**
+         * Registra informações de depuração sobre blocos
+         */
         public void debugBlock(String blockType, 
                             ComplexSymbolFactory.Location startLoc,
                             ComplexSymbolFactory.Location endLoc) {
@@ -395,7 +442,6 @@ parser code {:
                             " from " + formatLocation(startLoc) + 
                             " to " + formatLocation(endLoc));
         }
-
     }
 
     private final LocationManager locationManager = new LocationManager();
@@ -454,142 +500,7 @@ parser code {:
         }
     }
 
-    
-
-    private ComplexSymbolFactory.Location adjustEndLocation(ComplexSymbolFactory.Location loc) {
-        return new ComplexSymbolFactory.Location(loc.getLine(), loc.getColumn() + 1);
-    }
-
-    private ComplexSymbolFactory.Location getDeepestLocation(Node node, boolean isEnd) {
-        if (node == null) return new ComplexSymbolFactory.Location(0, 0);
-        int[] loc = node.getLocation();
-        if (loc == null || loc.length < 4) return new ComplexSymbolFactory.Location(0, 0);
-        
-        return new ComplexSymbolFactory.Location(
-            isEnd ? loc[2] : loc[0], 
-            isEnd ? loc[3] : loc[1]
-        );
-    }
-
-    private ComplexSymbolFactory.Location getDeepestEndLocation(List<? extends Node> nodes) {
-        if (nodes == null || nodes.isEmpty()) {
-            return new ComplexSymbolFactory.Location(0, 0);
-        }
-        
-        ComplexSymbolFactory.Location deepestLoc = new ComplexSymbolFactory.Location(0, 0);
-        
-        for (Node node : nodes) {
-            if (node == null || node.getLocation() == null) continue;
-            
-            int[] loc = node.getLocation();
-            if (loc.length < 4) continue;
-            
-            if (loc[2] > deepestLoc.getLine() || 
-                (loc[2] == deepestLoc.getLine() && loc[3] > deepestLoc.getColumn())) {
-                deepestLoc = new ComplexSymbolFactory.Location(loc[2], loc[3]);
-            }
-        }
-        
-        return deepestLoc;
-    }
-
-    private ComplexSymbolFactory.Location getDeepestEndLocation(Node node) {
-        if (node == null) {
-            return new ComplexSymbolFactory.Location(0, 0);
-        }
-        
-        int[] loc = node.getLocation();
-        if (loc == null || loc.length < 4) {
-            return new ComplexSymbolFactory.Location(0, 0);
-        }
-        
-        return new ComplexSymbolFactory.Location(loc[2], loc[3]);
-    }
-
-
-
-
-    private ComplexSymbolFactory.Location getDeepestListEndLocation(List<? extends Node> nodes) {
-        if (nodes == null || nodes.isEmpty()) {
-            return new ComplexSymbolFactory.Location(0, 0);
-        }
-        
-        ComplexSymbolFactory.Location deepestLoc = new ComplexSymbolFactory.Location(0, 0);
-        
-        for (Node node : nodes) {
-            if (node == null) continue;
-            
-            ComplexSymbolFactory.Location nodeLoc;
-            
-            if (node instanceof FuncDef) {
-                FuncDef funcDef = (FuncDef) node;
-                int[] funcLoc = funcDef.getLocation();
-                nodeLoc = new ComplexSymbolFactory.Location(funcLoc[2], funcLoc[3]);
-            } else {
-                int[] loc = node.getLocation();
-                if (loc == null || loc.length < 4) continue;
-                nodeLoc = new ComplexSymbolFactory.Location(loc[2], loc[3]);
-            }
-            
-            if (nodeLoc.getLine() > deepestLoc.getLine() || 
-                (nodeLoc.getLine() == deepestLoc.getLine() && nodeLoc.getColumn() > deepestLoc.getColumn())) {
-                deepestLoc = nodeLoc;
-            }
-        }
-        
-        return deepestLoc;
-    }
-
-
-    private ComplexSymbolFactory.Location getLatestLocation(ComplexSymbolFactory.Location loc1, ComplexSymbolFactory.Location loc2) {
-        if (loc1 == null || loc1.getLine() <= 0) {
-            return (loc2 != null && loc2.getLine() > 0) ? loc2 : new ComplexSymbolFactory.Location(0, 0);
-        }
-        if (loc2 == null || loc2.getLine() <= 0) {
-            return loc1;
-        }
-        
-        if (loc2.getLine() > loc1.getLine() || 
-            (loc2.getLine() == loc1.getLine() && loc2.getColumn() > loc1.getColumn())) {
-            return loc2;
-        }
-        return loc1;
-    }
-
-
 :}
-
-
-/**************************************************************************
- *              FEEL FREE TO MODIFY ANYTHING BELOW THIS LINE              
- *
- * The rules provided below parse expressions of the form <INT> + <INT> + ... 
- * You can re-use these rules or edit them as you wish. The start rule
- * should return a node of type Program.
- *
- * Tips: Production rules are usually followed by action code that will be
- * copied to the generated parser to be executed immediately after a reduce
- * operation; that is, when a production rule has been matched. You can name
- * a nonterminal or terminal symbol in a production rule using the colon
- * notation, e.g. expr_stmt ::= expr:e, to get the AST node for the matched
- * expression. In the action code, `e` will be a variable of whatever type
- * has been declared for the corresponding nonterminal, such as `Expr`.
- * Therefore, you can construct an AST Node of type `ExprStmt` with `e` in the
- * constructor: `new ExprStmt(exleft, exright, e)`
- *
- * The variables `exleft` and `exright` are automatically generated by CUP
- * and contain Location objects for the start and end of the expression `e`.
- * You can collect start and line number info for AST nodes by taking the
- * location of the left end of the leftmost symbol in a rule and the
- * location of the right end of the rightmost symbol. The auto-generated
- * variables have names `<sym>xleft` and `<sym>xright`, where <sym> is the
- * name given to the symbol using the colon notation.
- *
- * When you have nonterminals that are lists of things, e.g. List<Stmt> or
- * List<Declaration>, it is helpful to get the leftmost and rightmost
- * source location from within this list; we have provided some utility
- * functions below to do just that.
- **************************************************************************/
 
 
 /* The following code section is copied verbatim to the class that performs
@@ -777,21 +688,20 @@ program ::= def_list:d opt_stmt_list:s
                 leftLoc = new ComplexSymbolFactory.Location(1, 1);
             }
 
-
-           ComplexSymbolFactory.Location declsLoc = getDeepestListEndLocation(d);
-           ComplexSymbolFactory.Location stmtsLoc = getDeepestListEndLocation(s);
+           ComplexSymbolFactory.Location declsLoc = locationManager.getDeepestListEndLocation("declarations", d);
+           ComplexSymbolFactory.Location stmtsLoc = locationManager.getDeepestListEndLocation("statements", s);
            
-           ComplexSymbolFactory.Location rightLoc = getLatestLocation(declsLoc, stmtsLoc);
+           ComplexSymbolFactory.Location rightLoc = locationManager.getLatestLocation(declsLoc, stmtsLoc);
            
-           rightLoc = adjustEndLocation(rightLoc);
+           rightLoc = locationManager.adjustEndLocation(rightLoc);
            
            if (rightLoc.getLine() == 0) {
                if (!s.isEmpty()) {
                    Node lastStmt = s.get(s.size() - 1);
-                   rightLoc = adjustEndLocation(getDeepestEndLocation(lastStmt));
+                   rightLoc = locationManager.adjustEndLocation(locationManager.getDeepestEndLocation("lastStmt", lastStmt));
                } else if (!d.isEmpty()) {
                    Node lastDecl = d.get(d.size() - 1);
-                   rightLoc = adjustEndLocation(getDeepestEndLocation(lastDecl));
+                   rightLoc = locationManager.adjustEndLocation(locationManager.getDeepestEndLocation("lastDecl", lastDecl));
                } else {
                    rightLoc = new ComplexSymbolFactory.Location(1, 1);
                }
@@ -893,7 +803,7 @@ class_def ::= CLASS:c ID:name LPAREN ID:superclass RPAREN COLON NEWLINE INDENT c
 {: 
     ComplexSymbolFactory.Location startLoc = cxleft;
     
-    ComplexSymbolFactory.Location bodyEndLoc = getDeepestListEndLocation(body);
+    ComplexSymbolFactory.Location bodyEndLoc = locationManager.getDeepestListEndLocation("body", body);
     
     if (dedxright.getLine() > bodyEndLoc.getLine() || 
         (dedxright.getLine() == bodyEndLoc.getLine() && dedxright.getColumn() > bodyEndLoc.getColumn())) {
@@ -1307,10 +1217,10 @@ block ::= NEWLINE:nl INDENT:ind stmt_plus:stmts DEDENT:ded
             updateLastDedentLocation(dedxleft);
             
             ComplexSymbolFactory.Location startLoc = !stmts.isEmpty() ? 
-                getDeepestLocation(stmts.get(0), false) : 
+                locationManager.getDeepestLocation("stmts.get(0)", stmts.get(0), false) : 
                 indxleft;
             
-            ComplexSymbolFactory.Location contentEndLoc = getDeepestListEndLocation(stmts);
+            ComplexSymbolFactory.Location contentEndLoc = locationManager.getDeepestListEndLocation("stmts", stmts);
 
             if (dedxleft.getLine() > contentEndLoc.getLine()) {
                 contentEndLoc = new ComplexSymbolFactory.Location(dedxleft.getLine(), 0);
