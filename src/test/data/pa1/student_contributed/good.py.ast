@@ -1,0 +1,150 @@
+{
+  "declarations" : [ {
+    "name" : {
+      "name" : "fib",
+      "kind" : "Identifier",
+      "location" : [ 1, 5, 1, 7 ]
+    },
+    "params" : [ {
+      "identifier" : {
+        "name" : "n",
+        "kind" : "Identifier",
+        "location" : [ 1, 9, 1, 9 ]
+      },
+      "type" : {
+        "kind" : "ClassType",
+        "location" : [ 1, 12, 1, 14 ],
+        "className" : "int"
+      },
+      "kind" : "TypedVar",
+      "location" : [ 1, 9, 1, 14 ]
+    } ],
+    "returnType" : {
+      "kind" : "ClassType",
+      "location" : [ 1, 20, 1, 22 ],
+      "className" : "int"
+    },
+    "declarations" : [ ],
+    "statements" : [ {
+      "condition" : {
+        "kind" : "BinaryExpr",
+        "location" : [ 2, 8, 2, 13 ],
+        "left" : {
+          "name" : "n",
+          "kind" : "Identifier",
+          "location" : [ 2, 8, 2, 8 ]
+        },
+        "operator" : "<=",
+        "right" : {
+          "value" : 1,
+          "kind" : "IntegerLiteral",
+          "location" : [ 2, 13, 2, 13 ]
+        }
+      },
+      "thenBody" : [ {
+        "value" : {
+          "name" : "n",
+          "kind" : "Identifier",
+          "location" : [ 3, 16, 3, 16 ]
+        },
+        "kind" : "ReturnStmt",
+        "location" : [ 3, 9, 3, 16 ]
+      } ],
+      "elseBody" : [ {
+        "value" : {
+          "kind" : "BinaryExpr",
+          "location" : [ 5, 16, 5, 38 ],
+          "left" : {
+            "function" : {
+              "name" : "fib",
+              "kind" : "Identifier",
+              "location" : [ 5, 16, 5, 18 ]
+            },
+            "args" : [ {
+              "kind" : "BinaryExpr",
+              "location" : [ 5, 20, 5, 24 ],
+              "left" : {
+                "name" : "n",
+                "kind" : "Identifier",
+                "location" : [ 5, 20, 5, 20 ]
+              },
+              "operator" : "-",
+              "right" : {
+                "value" : 1,
+                "kind" : "IntegerLiteral",
+                "location" : [ 5, 24, 5, 24 ]
+              }
+            } ],
+            "kind" : "CallExpr",
+            "location" : [ 5, 16, 5, 25 ]
+          },
+          "operator" : "+",
+          "right" : {
+            "function" : {
+              "name" : "fib",
+              "kind" : "Identifier",
+              "location" : [ 5, 29, 5, 31 ]
+            },
+            "args" : [ {
+              "kind" : "BinaryExpr",
+              "location" : [ 5, 33, 5, 37 ],
+              "left" : {
+                "name" : "n",
+                "kind" : "Identifier",
+                "location" : [ 5, 33, 5, 33 ]
+              },
+              "operator" : "-",
+              "right" : {
+                "value" : 2,
+                "kind" : "IntegerLiteral",
+                "location" : [ 5, 37, 5, 37 ]
+              }
+            } ],
+            "kind" : "CallExpr",
+            "location" : [ 5, 29, 5, 38 ]
+          }
+        },
+        "kind" : "ReturnStmt",
+        "location" : [ 5, 9, 5, 38 ]
+      } ],
+      "kind" : "IfStmt",
+      "location" : [ 2, 5, 7, 0 ]
+    } ],
+    "kind" : "FuncDef",
+    "location" : [ 1, 1, 7, 0 ]
+  } ],
+  "statements" : [ {
+    "expr" : {
+      "function" : {
+        "name" : "print",
+        "kind" : "Identifier",
+        "location" : [ 7, 1, 7, 5 ]
+      },
+      "args" : [ {
+        "function" : {
+          "name" : "fib",
+          "kind" : "Identifier",
+          "location" : [ 7, 7, 7, 9 ]
+        },
+        "args" : [ {
+          "value" : 10,
+          "kind" : "IntegerLiteral",
+          "location" : [ 7, 11, 7, 12 ]
+        } ],
+        "kind" : "CallExpr",
+        "location" : [ 7, 7, 7, 13 ]
+      } ],
+      "kind" : "CallExpr",
+      "location" : [ 7, 1, 7, 14 ]
+    },
+    "kind" : "ExprStmt",
+    "location" : [ 7, 1, 7, 14 ]
+  } ],
+  "errors" : {
+    "errors" : [ ],
+    "kind" : "Errors",
+    "location" : [ 0, 0, 0, 0 ]
+  },
+  "kind" : "Program",
+  "location" : [ 1, 1, 7, 15 ]
+}
